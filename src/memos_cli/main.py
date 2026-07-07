@@ -1,5 +1,27 @@
-"""Main CLI application — the entrypoint for `memos`."""
+"""Main CLI application — the entrypoint for ``memos``.
+
+The ``ensure_utf8_stdio()`` call below is the UTF-8 bootstrap for the
+**pip console-script** entry point (``memos`` installed via ``pip``). The
+other two entry paths — ``python -m memos_cli`` and the PyInstaller
+frozen binary — have their own bootstraps in ``__main__.py`` and
+``_pyi_rth_utf8.py`` respectively. All three funnel into the same
+idempotent ``ensure_utf8_stdio`` (guarded by ``_APPLIED``), so the
+apparent duplication is intentional (fix #7). Do not remove this call
+thinking it is dead code: without it, ``pip install`` users on Windows
+would see CJK mojibake because Rich's ``Console`` (constructed just
+below) captures ``sys.stdout`` at import time.
+
+The ``ruff: noqa: E402`` directive at the top of this file replaces the
+per-import ``# noqa: E402`` clutter that OCR flagged in fix #4/#6 — the
+E402 warnings are unavoidable because the bootstrap must run before the
+Rich/Typer/Click imports that would otherwise capture GBK streams.
+"""
+# ruff: noqa: E402
 from __future__ import annotations
+
+from memos_cli.encoding_bootstrap import ensure_utf8_stdio
+
+ensure_utf8_stdio()
 
 import click
 import typer
