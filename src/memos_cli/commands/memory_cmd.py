@@ -1,6 +1,7 @@
 """Execution layer for memory commands."""
 from __future__ import annotations
 
+import logging
 import sys
 import time
 import json
@@ -244,18 +245,31 @@ def _poll_task_status(
 
     Returns the last status response observed. Never raises on timeout — callers
     inspect the returned status to decide messaging.
+
+    Honours a zero (or negative) timeout as a strict no-op: no network call is
+    made and an empty ``{}`` is returned. On a get_status failure the exception
+    is logged at WARNING level so operators can distinguish a genuine timeout
+    from an auth/network error before we swallow it.
     """
     deadline = time.time() + max(timeout, 0.0)
     last: dict[str, Any] = {}
     while True:
+        # Check deadline BEFORE calling the backend so that timeout=0 performs
+        # zero requests (callers expect --wait-timeout 0 to be a no-op).
+        if time.time() >= deadline:
+            return last
         try:
             last = backend.get_status(task_id) or {}
-        except Exception:
+        except Exception as exc:  # noqa: BLE001
+            logging.getLogger(__name__).warning(
+                "_poll_task_status: get_status(%r) raised %s: %s",
+                task_id,
+                type(exc).__name__,
+                exc,
+            )
             return last
         status = _extract_status(last)
         if status in _TERMINAL_TASK_STATUSES:
-            return last
-        if time.time() >= deadline:
             return last
         time.sleep(poll_interval)
 
@@ -313,6 +327,12 @@ def cmd_add(
     except Exception as exc:
         _handle_error(exc)
 
+    # Measure the add-call latency BEFORE polling. `duration_ms` is what gets
+    # surfaced to agent envelopes/telemetry consumers as the add-operation
+    # latency; folding in `wait_timeout` seconds of polling would inflate any
+    # SLA metric that depends on this value.
+    add_duration_ms = int((time.time() - start_time) * 1000)
+
     task_id = _extract_task_id(result)
     final_status = _extract_status(result)
     if wait and task_id and final_status not in _TERMINAL_TASK_STATUSES:
@@ -321,7 +341,7 @@ def cmd_add(
         if polled_status:
             final_status = polled_status
 
-    duration_ms = int((time.time() - start_time) * 1000)
+    duration_ms = add_duration_ms
     if final_output == "agent":
         format_agent_envelope(
             console,

@@ -66,6 +66,16 @@ class TaskIdExtractionTests(unittest.TestCase):
         self.assertEqual(memory_cmd._extract_status({"status": "Completed"}), "completed")
         self.assertEqual(memory_cmd._extract_status({}), "")
 
+    def test_extract_status_null_values(self) -> None:
+        # Explicit null in either the nested data.status or top-level status
+        # must not raise (AttributeError on .strip().lower()) and must yield
+        # the empty-string sentinel.
+        self.assertEqual(memory_cmd._extract_status({"data": {"status": None}}), "")
+        self.assertEqual(memory_cmd._extract_status({"status": None}), "")
+        self.assertEqual(
+            memory_cmd._extract_status({"data": None, "status": None}), ""
+        )
+
 
 class CmdAddWaitPollingTests(unittest.TestCase):
     def test_cmd_add_polls_status_until_completed(self) -> None:
@@ -94,8 +104,11 @@ class CmdAddWaitPollingTests(unittest.TestCase):
                     wait_timeout=30.0,
                 )
 
-        # Server was polled at least once and ultimately observed completion.
-        self.assertGreaterEqual(len(backend.status_calls), 1)
+        # Loop must terminate on the first 'completed' response — polling
+        # exactly matches the number of statuses supplied (2). Asserting the
+        # exact count catches an infinite-poll regression cleanly instead of
+        # only surfacing it later as an opaque StopIteration on time.side_effect.
+        self.assertEqual(len(backend.status_calls), 2)
         self.assertEqual(backend.status_calls[0], backend.task_id)
 
     def test_cmd_add_no_wait_skips_polling(self) -> None:
@@ -129,11 +142,22 @@ class CmdAddWaitPollingTests(unittest.TestCase):
         backend = FakeBackend(statuses=["running"] * 20)
         with patch.object(memory_cmd, "_load_backend", return_value=(config, backend)):
             with patch.object(memory_cmd, "time") as time_mod:
-                # time.time is called: 1) start_time in cmd_add, 2) once before loop
-                #    in _poll_task_status to set deadline, 3) inside the loop for
-                #    each iteration's timeout check. Advance the clock past
-                #    the timeout on the second polling iteration.
-                time_mod.time.side_effect = [0.0, 0.0, 0.0, 0.5, 999.0, 999.0]
+                # A stateful callable is more resilient than a fixed side_effect
+                # list: if the implementation adds a bookkeeping time.time()
+                # call (e.g. for logging), we still return the "past-deadline"
+                # tail value instead of surfacing StopIteration as an opaque
+                # RuntimeError. Sequence models: initial call = start_time (0.0),
+                # then the deadline anchor (also 0.0), one in-window sample
+                # (0.5) that lets the first poll run, then post-deadline forever.
+                _time_values = iter([0.0, 0.0, 0.0, 0.5, 999.0])
+
+                def _time_fn() -> float:
+                    try:
+                        return next(_time_values)
+                    except StopIteration:
+                        return 999.0  # stay past deadline for any further calls
+
+                time_mod.time.side_effect = _time_fn
                 time_mod.sleep.return_value = None
                 memory_cmd.cmd_add(
                     message_text="x",
@@ -201,6 +225,12 @@ class ListAliasTests(unittest.TestCase):
 
     def test_list_command_delegates_to_same_callback_as_get(self) -> None:
         commands = {self._resolved_name(cmd): cmd for cmd in cli_main.app.registered_commands}
+        # unittest sorts test methods alphabetically, so this test can run
+        # before test_list_command_registered. Assert presence explicitly so a
+        # regression surfaces as a readable AssertionError instead of a bare
+        # KeyError from the dict access below.
+        self.assertIn("list", commands, "list command not registered")
+        self.assertIn("get", commands, "get command not registered")
         self.assertIs(commands["list"].callback, commands["get"].callback)
 
 

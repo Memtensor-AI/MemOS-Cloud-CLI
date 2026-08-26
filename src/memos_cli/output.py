@@ -625,9 +625,9 @@ def format_add_result(
             console.print(f"[green]✓[/] Memory added{suffix}")
         elif is_running and waited:
             # We waited but the task did not reach a terminal state within timeout.
-            suffix = f" task_id={task_id}" if task_id else ""
+            suffix = f"; task_id={task_id}" if task_id else ""
             console.print(
-                f"[yellow]⚠[/] Memory add accepted but still processing;{suffix}."
+                f"[yellow]⚠[/] Memory add accepted but still processing{suffix}."
             )
             if task_id:
                 console.print(
@@ -636,17 +636,22 @@ def format_add_result(
                 )
         elif is_running:
             # --no-wait path (or task_id present but wait skipped).
-            suffix = f" task_id={task_id}" if task_id else ""
-            console.print(f"[green]✓[/] Memory add accepted;{suffix} (running).")
+            suffix = f"; task_id={task_id}" if task_id else ""
+            console.print(f"[green]✓[/] Memory add accepted{suffix} (running).")
             if task_id:
                 console.print(
                     f"  [dim]Memory is not yet queryable; use `memos status "
                     f"{task_id}` or retry `memos get` shortly.[/]"
                 )
-        elif message and payload_status == "running":
-            console.print(f"[green]✓[/] {message} [dim](task running)[/]")
         elif message:
-            console.print(f"[green]✓[/] {message}")
+            # Fallback for legacy payloads where the server sends a human
+            # message without a normalised task status. Reachable only when
+            # neither `final_status` nor `task_id` is present (otherwise the
+            # is_terminal_success / is_running branches above would have fired).
+            if payload_status == "running":
+                console.print(f"[green]✓[/] {message} [dim](task running)[/]")
+            else:
+                console.print(f"[green]✓[/] {message}")
         elif status == "success":
             console.print("[green]✓[/] Success")
         elif payload_status == "running":
