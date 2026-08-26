@@ -174,6 +174,10 @@ Parameters:
 - `[MESSAGE]`: Memory content to add; required; use `[MESSAGE]` or `--message`.
 - `-m, --message`: Memory content to add; optional; alias of `[MESSAGE]`; no separate default.
 - `--user-id`: User scope for the memory write; optional; defaults to configured `defaults.user_id`.
+- `--wait / --no-wait`: Wait for the server-side extraction task to finish before returning; optional; defaults to `--wait`. Use `--no-wait` to return immediately with a `task_id` (the memory will not yet be queryable).
+- `--wait-timeout`: Maximum seconds to wait when `--wait` is set; optional; defaults to `30`.
+
+> **Note:** `memos add` triggers an asynchronous ingestion pipeline on the server (message → extraction → storage). With the default `--wait`, the CLI polls `memos status <task_id>` until the task reaches `completed` / `failed` (or the timeout elapses). If you use `--no-wait`, `memos get` / `memos list` may briefly return empty until the extraction finishes; use the returned `task_id` with `memos status <task_id>` to track it.
 
 ### `memos search`
 
@@ -221,6 +225,8 @@ Parameters:
 - `--include-tool-memory`: Whether to include tool memory; optional; accepts `true` or `false`; current CLI exposes this flag, but the official `get_memory` docs do not state the API default when omitted.
 - `--format`: Output format; optional; defaults to `agent`.
 - `--detail`: Output detail level for non-JSON formats; optional; defaults to `simple`; supported values: `simple`, `detail`.
+
+> `memos list` is a convenience alias for `memos get`: `memos list` and `memos get` accept the same options and produce the same output.
 
 ### `memos delete`
 

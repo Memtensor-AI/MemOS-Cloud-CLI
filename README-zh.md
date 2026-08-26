@@ -169,6 +169,10 @@ memos add "用户喜欢 Python 编程"
 - `[MESSAGE]`：要写入的记忆内容；必填；`[MESSAGE]` 与 `--message` 二选一。
 - `-m, --message`：要写入的记忆内容；可选；`[MESSAGE]` 的别名；无单独默认值。
 - `--user-id`：用户维度；可选；默认取配置中的 `defaults.user_id`。
+- `--wait / --no-wait`：是否等待服务端异步入库任务完成后再返回；可选；默认 `--wait`。使用 `--no-wait` 会在获得 `task_id` 后立即返回（此时记忆尚未可查）。
+- `--wait-timeout`：`--wait` 模式下等待任务完成的最长秒数；可选；默认 `30`。
+
+> **提示：** `memos add` 触发的是服务端的异步入库流水线（消息 → 抽取 → 落库）。默认 `--wait` 模式会自动轮询 `memos status <task_id>` 直到任务终态。使用 `--no-wait` 时，`memos get` / `memos list` 在短暂时间内可能查不到新记忆，可用 `memos status <task_id>` 跟踪进度。
 
 ### `memos search`
 
@@ -216,6 +220,8 @@ memos get user_123 --format json --detail detail
 - `--include-tool-memory`：是否召回工具记忆；可选；接受 `true` 或 `false`；当前 CLI 已暴露该参数，但官方 `get_memory` 文档未说明不传时的接口默认值。
 - `--format`：输出格式；可选；默认值为 `agent`。
 - `--detail`：非 JSON 输出的详略级别；可选；默认值为 `simple`；支持 `simple`、`detail`。
+
+> `memos list` 是 `memos get` 的别名：`memos list` 与 `memos get` 参数与输出完全一致。
 
 ### `memos delete`
 

@@ -202,6 +202,64 @@ def parse_bool_option(value: str | None, *, option_name: str) -> bool | None:
     return VALID_BOOL_STRINGS[normalized]
 
 
+def _extract_task_id(response: Any) -> str | None:
+    """Best-effort extraction of an async task_id from an add response."""
+    if not isinstance(response, dict):
+        return None
+    for key in ("task_id", "taskId"):
+        value = response.get(key)
+        if isinstance(value, str) and value:
+            return value
+    payload = response.get("data")
+    if isinstance(payload, dict):
+        for key in ("task_id", "taskId"):
+            value = payload.get(key)
+            if isinstance(value, str) and value:
+                return value
+    return None
+
+
+def _extract_status(response: Any) -> str:
+    """Best-effort extraction of task status ('running' / 'completed' / ...)."""
+    if not isinstance(response, dict):
+        return ""
+    payload = response.get("data")
+    if isinstance(payload, dict):
+        status = payload.get("status")
+        if isinstance(status, str):
+            return status.strip().lower()
+    top = response.get("status")
+    if isinstance(top, str):
+        return top.strip().lower()
+    return ""
+
+
+_TERMINAL_TASK_STATUSES = {"completed", "success", "succeeded", "done", "failed", "error"}
+
+
+def _poll_task_status(
+    backend, task_id: str, *, timeout: float, poll_interval: float = 0.5
+) -> dict[str, Any]:
+    """Poll /get/status until the task reaches a terminal state or timeout elapses.
+
+    Returns the last status response observed. Never raises on timeout — callers
+    inspect the returned status to decide messaging.
+    """
+    deadline = time.time() + max(timeout, 0.0)
+    last: dict[str, Any] = {}
+    while True:
+        try:
+            last = backend.get_status(task_id) or {}
+        except Exception:
+            return last
+        status = _extract_status(last)
+        if status in _TERMINAL_TASK_STATUSES:
+            return last
+        if time.time() >= deadline:
+            return last
+        time.sleep(poll_interval)
+
+
 def cmd_add(
     *,
     message_text: str | None,
@@ -217,6 +275,8 @@ def cmd_add(
     async_mode: bool | None,
     output_format: str,
     detail: str,
+    wait: bool = True,
+    wait_timeout: float = 30.0,
 ) -> None:
     """Execute add."""
     start_time = time.time()
@@ -253,6 +313,14 @@ def cmd_add(
     except Exception as exc:
         _handle_error(exc)
 
+    task_id = _extract_task_id(result)
+    final_status = _extract_status(result)
+    if wait and task_id and final_status not in _TERMINAL_TASK_STATUSES:
+        status_response = _poll_task_status(backend, task_id, timeout=wait_timeout)
+        polled_status = _extract_status(status_response)
+        if polled_status:
+            final_status = polled_status
+
     duration_ms = int((time.time() - start_time) * 1000)
     if final_output == "agent":
         format_agent_envelope(
@@ -267,7 +335,14 @@ def cmd_add(
     if final_output == "json":
         format_json(console, result)
         return
-    format_add_result(console, result, output="text")
+    format_add_result(
+        console,
+        result,
+        output="text",
+        task_id=task_id,
+        final_status=final_status,
+        waited=wait,
+    )
 
 
 def cmd_extract(

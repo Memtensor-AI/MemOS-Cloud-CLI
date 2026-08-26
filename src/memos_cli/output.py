@@ -574,8 +574,24 @@ def format_single_memory(console: Console, mem: dict, output: str = "text", *, d
     format_memories_text(console, [mem], title="memory", detail=detail)
 
 
-def format_add_result(console: Console, result: dict | list, output: str = "text") -> None:
-    """Format the result of an add operation."""
+def format_add_result(
+    console: Console,
+    result: dict | list,
+    output: str = "text",
+    *,
+    task_id: str | None = None,
+    final_status: str | None = None,
+    waited: bool = False,
+) -> None:
+    """Format the result of an add operation.
+
+    Args:
+        task_id: async task id extracted from the add response, if any.
+        final_status: normalized status after optional polling ("running",
+            "completed", "failed", ...). Empty string means unknown.
+        waited: whether ``cmd_add`` attempted to poll ``/get/status`` before
+            calling this formatter.
+    """
     if output == "json":
         format_json(console, result)
         return
@@ -584,6 +600,10 @@ def format_add_result(console: Console, result: dict | list, output: str = "text
         return
 
     results = extract_memory_records_from_response(result, detail="simple")
+    status_norm = (final_status or "").strip().lower()
+    is_terminal_success = status_norm in {"completed", "success", "succeeded", "done"}
+    is_failed = status_norm in {"failed", "error"}
+    is_running = status_norm == "running" or (not status_norm and bool(task_id))
 
     if not results:
         message = ""
@@ -597,7 +617,33 @@ def format_add_result(console: Console, result: dict | list, output: str = "text
                 payload_status = str(raw_payload.get("status", "") or "").strip().lower()
 
         console.print()
-        if message and payload_status == "running":
+        if is_failed:
+            suffix = f" [dim](task_id={task_id})[/]" if task_id else ""
+            console.print(f"[red]✗[/] Memory add failed{suffix}")
+        elif is_terminal_success:
+            suffix = f" [dim](task_id={task_id})[/]" if task_id else ""
+            console.print(f"[green]✓[/] Memory added{suffix}")
+        elif is_running and waited:
+            # We waited but the task did not reach a terminal state within timeout.
+            suffix = f" task_id={task_id}" if task_id else ""
+            console.print(
+                f"[yellow]⚠[/] Memory add accepted but still processing;{suffix}."
+            )
+            if task_id:
+                console.print(
+                    f"  [dim]Retry `memos get` in a few seconds or run "
+                    f"`memos status {task_id}` to check completion.[/]"
+                )
+        elif is_running:
+            # --no-wait path (or task_id present but wait skipped).
+            suffix = f" task_id={task_id}" if task_id else ""
+            console.print(f"[green]✓[/] Memory add accepted;{suffix} (running).")
+            if task_id:
+                console.print(
+                    f"  [dim]Memory is not yet queryable; use `memos status "
+                    f"{task_id}` or retry `memos get` shortly.[/]"
+                )
+        elif message and payload_status == "running":
             console.print(f"[green]✓[/] {message} [dim](task running)[/]")
         elif message:
             console.print(f"[green]✓[/] {message}")
